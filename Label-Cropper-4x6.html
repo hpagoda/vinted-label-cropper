@@ -164,19 +164,42 @@
     // A landscape letter/A4 sheet holds the label on its left half.
     var limitX = (vp.width > vp.height * 1.15) ? Math.floor(c.width / 2) : c.width;
     var data = ctx.getImageData(0, 0, c.width, c.height).data;
-    var minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
+    var ink = function (x, y) { var i = (y * c.width + x) * 4; return data[i] + data[i + 1] + data[i + 2] < 600; };
+
+    // Rows that contain ink, grouped into blocks separated by big blank gaps.
+    var blocks = [], start = -1, lastInk = -1, GAP = 24 * scale;
     for (var y = 0; y < c.height; y++) {
-      var row = y * c.width * 4;
-      for (var x = 0; x < limitX; x++) {
-        var i = row + x * 4;
-        if (data[i] + data[i + 1] + data[i + 2] < 600) {
-          if (x < minX) minX = x; if (x > maxX) maxX = x;
-          if (y < minY) minY = y; if (y > maxY) maxY = y;
-        }
+      var has = false;
+      for (var x = 0; x < limitX; x++) { if (ink(x, y)) { has = true; break; } }
+      if (has) {
+        if (start < 0) start = y;
+        else if (y - lastInk > GAP) { blocks.push([start, lastInk]); start = y; }
+        lastInk = y;
+      }
+    }
+    if (start < 0) return null;
+    blocks.push([start, lastInk]);
+
+    // Keep the tallest run of blocks that still fits a 6-inch label, which drops
+    // separate notes printed above or below the label (e.g. "Ship with FedEx ONLY").
+    var MAXH = 460 * scale, best = null;
+    for (var a = 0; a < blocks.length; a++) {
+      for (var b = a; b < blocks.length; b++) {
+        var hgt = blocks[b][1] - blocks[a][0];
+        if (hgt > MAXH) break;
+        if (!best || hgt > best[1] - best[0]) best = [blocks[a][0], blocks[b][1]];
+      }
+    }
+    if (!best) best = [blocks[0][0], blocks[blocks.length - 1][1]];
+
+    var minX = Infinity, maxX = -1, minY = best[0], maxY = best[1];
+    for (var yy = minY; yy <= maxY; yy++) {
+      for (var xx = 0; xx < limitX; xx++) {
+        if (ink(xx, yy)) { if (xx < minX) minX = xx; if (xx > maxX) maxX = xx; }
       }
     }
     if (maxX < 0) return null;
-    var pad = 2 * scale; // about 2pt of breathing room
+    var pad = 8 * scale; // about 1/10 inch margin so the printer edge never clips
     var p1 = vp.convertToPdfPoint(Math.max(0, minX - pad), Math.max(0, minY - pad));
     var p2 = vp.convertToPdfPoint(Math.min(c.width, maxX + 1 + pad), Math.min(c.height, maxY + 1 + pad));
     return {
